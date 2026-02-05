@@ -1,122 +1,113 @@
 # plagctools
 
-**Autor:** MSZ98 & C
+**Authors:** MSZ98 & C
 
 ---
 
-## Instalacja
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Wymagania
-
-- Python 3.10+
-- PyPDF2, numpy, matplotlib, pymupdf, imagehash, Pillow
+Requires Python 3.10+.
 
 ---
 
-## Użycie
+## Input directory
 
-### Porównanie tekstu
+The directory passed as argument must contain submission files **directly from Moodle**, downloaded via:
 
-```bash
-python compare_text.py [próg] <katalog>
+**Zadanie → Zobacz wszystkie zadania → Akcja oceniania → Pobierz wszystkie przesłane rozwiązania**
+
+Filenames must follow the format:
+
+```
+<group (optional)>-<name>_<SubmissionID>_assignsubmission_file_<filename>
 ```
 
-| Argument | Opis |
-|----------|------|
-| `próg` | Opcjonalnie. Próg podobieństwa (0–1 lub 0–100). Pary powyżej progu są uznawane za podejrzane. **Pominięcie = obliczany z mediany** (współczynnik w `AUTOTHRESHOLD_MEDIAN_FACTOR`). |
-| `katalog` | Ścieżka do folderu z plikami PDF. |
-
-Przykłady:
-```bash
-python compare_text.py katalog/             # próg obliczany z mediany
-python compare_text.py 0.30 katalog/        # próg 30%
-python compare_text.py 30 katalog/          # 30 = 30%
-python compare_text.py 0.25 ./sprawozdania
-```
-
-### Porównanie obrazów
-
-```bash
-python compare_images.py [próg] <katalog>
-```
-
-| Argument | Opis |
-|----------|------|
-| `próg` | Opcjonalnie. Próg podobieństwa obrazów (0–1 lub 0–100). **Pominięcie = obliczany z mediany.** |
-| `katalog` | Ścieżka do folderu z plikami PDF. |
-
-Przykłady:
-```bash
-python compare_images.py katalog/           # próg obliczany z mediany
-python compare_images.py 0.60 katalog/
-python compare_images.py 60 ./pdf
-```
-
-Katalog musi zawierać pliki PDF. Skrypty automatycznie przetworzą wszystkie pliki `*.pdf`.
+Examples:
+- `1A-Jan Kowalski_234189_assignsubmission_file_sprawozdanie.pdf` (with group)
+- `Jan Kowalski_234189_assignsubmission_file_sprawozdanie.pdf` (no group)
 
 ---
 
-## Co robią skrypty
+## Workflow
 
-### compare_text.py
-
-1. **Ekstrakcja** – wyciąga tekst z każdego PDF
-2. **Autor i data** – odczytuje autora (z metadanych lub tekstu) oraz datę oddania
-3. **Porównanie** – liczy podobieństwo tekstów (SequenceMatcher)
-4. **Analiza** – na podstawie dat ustala, kto mógł ściągnąć od kogo (późniejszy od wcześniejszego)
-5. **Wynik** – tabela autorów, dat i plików; lista podejrzeń; heatmapa z macierzą podobieństwa
-
-### compare_images.py
-
-1. **Ekstrakcja** – wyciąga obrazy z PDF do `extracted_images/<nazwa_pliku>/`
-2. **Autor i data** – jak w compare_text
-3. **Porównanie** – perceptual hash (phash) między obrazami z różnych dokumentów
-4. **Analiza** – jak w compare_text, ale dla podobieństwa obrazów
-5. **Wynik** – jak w compare_text + heatmapa podobieństwa obrazów
-
-### pdf_utils.py
-
-Moduł wspólny z funkcjami:
-
-- `get_pdf_date(path)` – data oddania (metadata lub data modyfikacji pliku)
-- `extract_author(path)` – imię i nazwisko (metadata, tekst po „Autor:”, „Wykonali:” itd., lub nazwa pliku)
-- `normalize_author(name)` – normalizacja do porównań
+1. **extract_content.py** – extract content from PDFs (required first step)
+2. **analyze_text.py** – text similarity analysis
+3. **analyze_images.py** – image similarity analysis
 
 ---
 
-## Próg podobieństwa
+## extract_content.py
 
-Próg jest **opcjonalnym pierwszym argumentem**. Gdy go pominiemy, jest obliczany z mediany podobieństw (poza przekątną). Współczynnik: `AUTOTHRESHOLD_MEDIAN_FACTOR` na początku pliku.
+**Usage:** `python extract_content.py <dirpath>`
 
-Gdy podany:
+**What it does:**
+- Scans directory for PDF files (e.g. `ni_writer`)
+- Detects group mode (prefix `1A-` in filenames)
+- Extracts page text to `dirpath/text/<report>/1.txt`, `2.txt`, ...
+- Extracts images to `dirpath/text/<report>/images/`
+- Creates `metadata.txt` with authors, group, submid
+- Filters out files that do not look like reports
+- Detects duplicate files (MD5)
 
-- **Ułamek** (0–1): `0.30`, `0.60`
-- **Procent** (0–100): `30`, `60` – wartość > 1 jest traktowana jako procent
-- Z sufiksem `%`: `30%`
-
-Im niższy próg, tym więcej par zostanie zgłoszonych (większa czułość, więcej fałszywych alarmów). Im wyższy – tym mniej (tylko wyraźne podobieństwa). Obliczanie z mediany dostosowuje próg do rozkładu podobieństw w danym zestawie sprawozdań.
+**Example:** `python extract_content.py ni_writer`
 
 ---
 
-## Interpretacja wyników
+## analyze_text.py
 
-### Tabela
+**Usage:** `python analyze_text.py [threshold] <dirpath>`
 
-| Autor | Data oddania | Nazwa pliku |
-|-------|--------------|-------------|
-| Jan Kowalski | 2026-02-01 18:00 | sprawozdanie.pdf |
+**What it does:**
+- Requires prior extraction (`extract_content.py`)
+- Loads text from `dirpath/text/`
+- TF-IDF + cosine similarity (unigrams + bigrams)
+- Prints similar report pairs
+- Displays similarity matrix (matplotlib)
 
-### Analiza plagiatu
+**Threshold:** 0–1 or 0–100 (e.g. `0.6`, `60`). Default: 0.6.
 
-- **„X prawdopodobnie ściągał od Y”** – X oddał później niż Y, podobieństwo powyżej progu
-- **„Sprawozdania X i Y są podobne”** – podobieństwo powyżej progu, ale daty równe lub nieznane
+**Examples:**
+```bash
+python analyze_text.py ni_writer
+python analyze_text.py 0.7 ni_writer
+```
 
-### Heatmapa
+---
 
-- **Biały** – małe podobieństwo
-- **Czerwony** – duże podobieństwo
-- **Zielone kółko** – para z ustalonym kierunkiem (kto od kogo), zgodnie z datami
+## analyze_images.py
+
+**Usage:** `python analyze_images.py [threshold] <dirpath>`
+
+**What it does:**
+- Requires prior extraction (`extract_content.py`)
+- **Phase 1:** identical images (file MD5)
+- **Phase 2:** similar images (perceptual hash – phash)
+- Prints who copied from whom
+- Displays similarity matrix (matplotlib)
+
+**Threshold:** 0–1 or 0–100. Default: 0.8.
+
+**Examples:**
+```bash
+python analyze_images.py ni_writer
+python analyze_images.py 0.9 ni_writer
+```
+
+---
+
+## Output structure
+
+```
+ni_writer/                    # input directory with PDFs
+├── *.pdf
+└── text/                     # created by extract_content
+    ├── metadata.txt          # groups: true/false
+    └── Autor_123_.../        # per-report directory
+        ├── metadata.txt      # authors, group, submid
+        ├── 1.txt, 2.txt...   # page text
+        └── images/           # extracted images
+```
